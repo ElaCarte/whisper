@@ -26,6 +26,8 @@
 
 import os, struct, time, operator, itertools
 
+import logging
+
 try:
   import fcntl
   CAN_LOCK = True
@@ -40,6 +42,7 @@ except ImportError:
   CAN_FALLOCATE = False
 
 fallocate = None
+logger = logging.getLogger(__name__)
 
 if CAN_FALLOCATE: 
   libc_name = ctypes.util.find_library('c')
@@ -477,6 +480,7 @@ def __propagate(fh,header,timestamp,higher,lower):
   knownPercent = float(len(knownValues)) / float(len(neighborValues))
   if knownPercent >= xff: #we have enough data to propagate a value!
     aggregateValue = aggregate(aggregationMethod, knownValues)
+
     myPackedPoint = struct.pack(pointFormat,lowerIntervalStart,aggregateValue)
     fh.seek(lower['offset'])
     packedPoint = fh.read(pointSize)
@@ -516,42 +520,35 @@ def file_update(fh, value, timestamp):
     fcntl.flock( fh.fileno(), fcntl.LOCK_EX )
 
   header = __readHeader(fh)
-  now = int( time.time() )
-  if timestamp is None:
-    timestamp = now
-
   timestamp = int(timestamp)
-  diff = now - timestamp
-  if not ((diff < header['maxRetention']) and diff >= 0):
-    raise TimestampNotCovered("Timestamp not covered by any archives in "
-      "this database.")
 
-  for i,archive in enumerate(header['archives']): #Find the highest-precision archive that covers timestamp
-    if archive['retention'] < diff: continue
-    lowerArchives = header['archives'][i+1:] #We'll pass on the update to these lower precision archives later
-    break
+  higher = header['archives'][0]
+  lowerArchives = header['archives'][1:]
 
-  #First we update the highest-precision archive
-  myInterval = timestamp - (timestamp % archive['secondsPerPoint'])
-  myPackedPoint = struct.pack(pointFormat,myInterval,value)
-  fh.seek(archive['offset'])
+  # First we update the highest-precision archive
+  myInterval = timestamp - (timestamp % higher['secondsPerPoint'])
+  myPackedPoint = struct.pack(pointFormat, myInterval, value)
+  fh.seek(higher['offset'])
   packedPoint = fh.read(pointSize)
-  (baseInterval,baseValue) = struct.unpack(pointFormat,packedPoint)
+  baseInterval, baseValue = struct.unpack(pointFormat, packedPoint)
 
-  if baseInterval == 0: #This file's first update
-    fh.seek(archive['offset'])
+  if baseInterval == 0: # This file's first update
+    fh.seek(higher['offset'])
     fh.write(myPackedPoint)
-    baseInterval,baseValue = myInterval,value
-  else: #Not our first update
+    baseInterval, baseValue = myInterval, value
+  else: # Not our first update
     timeDistance = myInterval - baseInterval
-    pointDistance = timeDistance / archive['secondsPerPoint']
+
+    if timeDistance < 0:
+      raise TimestampNotCovered("Timestamp too far in the past")
+
+    pointDistance = timeDistance / higher['secondsPerPoint']
     byteDistance = pointDistance * pointSize
-    myOffset = archive['offset'] + (byteDistance % archive['size'])
+    myOffset = higher['offset'] + (byteDistance % higher['size'])
     fh.seek(myOffset)
     fh.write(myPackedPoint)
 
-  #Now we propagate the update to lower-precision archives
-  higher = archive
+  # Now we propagate the update to lower-precision archives
   for lower in lowerArchives:
     if not __propagate(fh, header, myInterval, higher, lower):
       break

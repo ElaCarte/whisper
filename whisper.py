@@ -746,14 +746,30 @@ def file_fetch(fh, fromTime, untilTime):
 
   return __archive_fetch(fh, archive, fromTime, untilTime)
 
+
+def __next_interval(aTime, step):
+  """__next_interval(aTime, step)
+
+aTime is an epoch time
+step is the step size
+
+Returns the next epoch time larger than or equal to aTime that is
+a multiple of step
+"""
+  if aTime % step != 0:
+    aTime += step - (aTime % step)
+
+  return int(aTime)
+
+
 def __archive_fetch(fh, archive, fromTime, untilTime):
   """
 Fetch data from a single archive. Note that checks for validity of the time
 period requested happen above this level so it's possible to wrap around the
 archive on a read and request data older than the archive's retention
 """
-  fromInterval = int( fromTime - (fromTime % archive['secondsPerPoint']) ) + archive['secondsPerPoint']
-  untilInterval = int( untilTime - (untilTime % archive['secondsPerPoint']) ) + archive['secondsPerPoint']
+  fromInterval = __next_interval(fromTime, archive['secondsPerPoint'])
+  untilInterval = __next_interval(untilTime, archive['secondsPerPoint'])
   fh.seek(archive['offset'])
   packedPoint = fh.read(pointSize)
   (baseInterval,baseValue) = struct.unpack(pointFormat,packedPoint)

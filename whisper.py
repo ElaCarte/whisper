@@ -540,7 +540,8 @@ def file_update(fh, value, timestamp):
     timeDistance = myInterval - baseInterval
 
     if timeDistance < 0:
-      raise TimestampNotCovered("Timestamp too far in the past")
+        logger.warning("Timestamp too far in past")
+        #raise TimestampNotCovered("Timestamp too far in the past")
 
     pointDistance = timeDistance / higher['secondsPerPoint']
     byteDistance = pointDistance * pointSize
